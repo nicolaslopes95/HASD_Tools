@@ -1,0 +1,6 @@
+beautifulsoup4
+setuptools
+jira
+matplotlib
+pandas
+python-dotenv

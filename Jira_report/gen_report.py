@@ -1,39 +1,55 @@
-import logging
-from jira_connection import get_jira_connection
-from html_report import generate_html_report
-import os
-from utilities import send_html_email
-from datetime import datetime, timedelta
-import pandas as pd
+import base64
+import io
 import json
-import sys
-from dotenv import load_dotenv  # Ajouter cette ligne
+import logging
+import os
 import smtplib
-from email.mime.text import MIMEText
+import sys
+from datetime import datetime, timedelta
 from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
 
-# Charger les variables d'environnement depuis le fichier .env
+import matplotlib.pyplot as plt
+import pandas as pd
+from bs4 import BeautifulSoup
+from dotenv import load_dotenv
+from jira import JIRA
+
+# Load environment variables
 load_dotenv()
-
-
 
 # Logging configuration
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
+def get_jira_connection(server, email, token):
+    """Establish connection to JIRA server."""
+    return JIRA(server=server, basic_auth=(email, token))
+
+def send_html_email(subject, sender_email, receiver_email, smtp_server, smtp_port, smtp_username, smtp_password, html_content):
+    """Send HTML email using SMTP."""
+    msg = MIMEMultipart('alternative')
+    msg['Subject'] = subject
+    msg['From'] = sender_email
+    msg['To'] = receiver_email
+
+    part2 = MIMEText(html_content, 'html')
+    msg.attach(part2)
+
+    try:
+        with smtplib.SMTP(smtp_server, smtp_port) as server:
+            server.starttls()
+            server.login(smtp_username, smtp_password)
+            server.sendmail(sender_email, receiver_email, msg.as_string())
+            logging.info("Email sent successfully")
+    except Exception as e:
+        logging.error(f"Error sending email: {e}")
+
 def convert_worklogs_to_json(df):
-    """
-    Converts the worklogs DataFrame into a nested JSON structure organized by Epic, Issue, and Worklogs.
-
-    :param df: pandas DataFrame containing worklog information
-    :return: JSON string with the desired structure
-    """
+    """Convert worklog DataFrame to JSON structure."""
     json_data = {}
-
-    # Group by Epic Key
     grouped_epics = df.groupby(['Epic Key', 'Epic Name', 'Epic Labels'])
 
     for (epic_key, epic_name, epic_labels), epic_group in grouped_epics:
-        # Initialize Epic entry
         if epic_key not in json_data:
             json_data[epic_key] = {
                 'Epic Name': epic_name,
@@ -41,11 +57,8 @@ def convert_worklogs_to_json(df):
                 'Issues': {}
             }
 
-        # Group by Issue within the Epic
         grouped_issues = epic_group.groupby(['Issue Key', 'Summary', 'Issue Type'])
-
         for (issue_key, summary, issue_type), issue_group in grouped_issues:
-            # Initialize Issue entry
             if issue_key not in json_data[epic_key]['Issues']:
                 json_data[epic_key]['Issues'][issue_key] = {
                     'Summary': summary,
@@ -53,7 +66,6 @@ def convert_worklogs_to_json(df):
                     'Worklogs': []
                 }
 
-            # Add Worklogs to the Issue
             for _, row in issue_group.iterrows():
                 worklog = {
                     'Worklog Author': row['Worklog Author'],
@@ -63,8 +75,44 @@ def convert_worklogs_to_json(df):
                 }
                 json_data[epic_key]['Issues'][issue_key]['Worklogs'].append(worklog)
 
-    # Convert the dictionary to a JSON string with indentation for readability
     return json.dumps(json_data, indent=4)
+
+def time_to_hours(time_str):
+    """Convert JIRA time string to hours."""
+    if time_str.endswith('d'):
+        return float(time_str[:-1]) * 8
+    elif time_str.endswith('h'):
+        return float(time_str[:-1])
+    elif time_str.endswith('m'):
+        return float(time_str[:-1]) / 60
+    elif time_str.endswith('s'):
+        return float(time_str[:-1]) / 3600
+    return 0
+
+def calculate_time_per_person_and_label(worklogs_df):
+    """Calculate time spent by person and label."""
+    worklogs_df['Hours Spent'] = worklogs_df['Time Spent'].apply(time_to_hours)
+    worklogs_df['Epic Label'] = worklogs_df['Epic Labels'].str.split(',')
+    worklogs_df = worklogs_df.explode('Epic Label').reset_index(drop=True)
+    worklogs_df['Epic Label'] = worklogs_df['Epic Label'].str.strip()
+
+    time_per_person_and_label = worklogs_df.groupby(['Worklog Author', 'Epic Label'])['Hours Spent'].sum().reset_index()
+    time_per_person_and_label['Hours Spent'] = time_per_person_and_label['Hours Spent'].round(2)
+
+    return time_per_person_and_label
+
+def filter_time_by_label(total_time_per_person_and_label, labels_to_exclude):
+    """Filter time data by excluding specified labels."""
+    mask_exclude = ~total_time_per_person_and_label['Epic Label'].isin(labels_to_exclude)
+    mask_include = total_time_per_person_and_label['Epic Label'].isin(labels_to_exclude)
+    
+    filtered_df_exclude = total_time_per_person_and_label[mask_exclude].copy()
+    filtered_df_include = total_time_per_person_and_label[mask_include].copy()
+    
+    filtered_df_exclude.reset_index(drop=True, inplace=True)
+    filtered_df_include.reset_index(drop=True, inplace=True)
+    
+    return filtered_df_exclude, filtered_df_include
 
 def extract_worklogs_in_period(jira, project, start_date, end_date, epic_field_id):
     """
@@ -250,45 +298,6 @@ def extract_worklogs_in_period(jira, project, start_date, end_date, epic_field_i
     logging.info(f"Extracted {len(df)} worklogs from JIRA.")
     return df
 
-
-
-
-
-def calculate_time_per_person_and_label(worklogs_df):
-    """
-    Calculates the time spent by each person on each Epic label.
-
-    :param worklogs_df: DataFrame containing worklog data
-    :return: DataFrame with time spent per person and per Epic label
-    """
-    # Convert 'Time Spent' to hours
-    def time_to_hours(time_str):
-        if time_str.endswith('d'):
-            return float(time_str[:-1]) * 8  # 1 day = 8 hours
-        elif time_str.endswith('h'):
-            return float(time_str[:-1])
-        elif time_str.endswith('m'):
-            return float(time_str[:-1]) / 60
-        elif time_str.endswith('s'):
-            return float(time_str[:-1]) / 3600
-        else:
-            return 0
-
-    worklogs_df['Hours Spent'] = worklogs_df['Time Spent'].apply(time_to_hours)
-
-    # Split Epic labels into individual rows
-    worklogs_df['Epic Label'] = worklogs_df['Epic Labels'].str.split(',')
-    worklogs_df = worklogs_df.explode('Epic Label').reset_index(drop=True)
-    worklogs_df['Epic Label'] = worklogs_df['Epic Label'].str.strip()
-
-    # Group by author and Epic label, then sum the time spent
-    time_per_person_and_label = worklogs_df.groupby(['Worklog Author', 'Epic Label'])['Hours Spent'].sum().reset_index()
-
-    # Round to two decimal places
-    time_per_person_and_label['Hours Spent'] = time_per_person_and_label['Hours Spent'].round(2)
-
-    return time_per_person_and_label
-
 def calculate_time_per_person_and_epic(worklogs_df):
     """
     Calculates the time spent by each person on each Epic.
@@ -318,31 +327,6 @@ def calculate_time_per_person_and_epic(worklogs_df):
     time_per_person_and_epic['Hours Spent'] = time_per_person_and_epic['Hours Spent'].round(2)
 
     return time_per_person_and_epic
-
-def filter_time_by_label(total_time_per_person_and_label, labels_to_exclude):
-    """
-    Filters the total_time_per_person_and_label DataFrame by excluding specified labels
-    and also returns a DataFrame with only the specified labels.
-
-    :param total_time_per_person_and_label: DataFrame containing time spent per person and per label
-    :param labels_to_exclude: List of labels to exclude
-    :return: Tuple containing two DataFrames:
-             1. Filtered DataFrame without the specified labels
-             2. DataFrame containing only the specified labels
-    """
-    # Create boolean masks for rows to keep and exclude
-    mask_exclude = ~total_time_per_person_and_label['Epic Label'].isin(labels_to_exclude)
-    mask_include = total_time_per_person_and_label['Epic Label'].isin(labels_to_exclude)
-    
-    # Apply the masks to filter the DataFrame
-    filtered_df_exclude = total_time_per_person_and_label[mask_exclude].copy()
-    filtered_df_include = total_time_per_person_and_label[mask_include].copy()
-    
-    # Reset the index of the filtered DataFrames
-    filtered_df_exclude.reset_index(drop=True, inplace=True)
-    filtered_df_include.reset_index(drop=True, inplace=True)
-    
-    return filtered_df_exclude, filtered_df_include
 
 def create_graph_from_filtered_df(filtered_df_exclude):
     """
