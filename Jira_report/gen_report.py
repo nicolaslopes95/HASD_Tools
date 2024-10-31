@@ -1,3 +1,28 @@
+"""
+JIRA Report Generator
+
+This script connects to a JIRA instance to extract worklog data for a specified project within a given date range. 
+It processes the worklogs to calculate time spent by each person on various tasks and epics, and generates 
+HTML reports, CSV files, and JSON outputs. The script also includes functionality to send the generated report 
+via email.
+
+Key Features:
+- Connects to JIRA using provided credentials.
+- Extracts worklogs based on specified project and date range.
+- Converts worklogs to JSON format for easy manipulation.
+- Calculates time spent per person and per epic.
+- Generates visual reports in HTML format with pie charts.
+- Sends the report via email using SMTP.
+
+Dependencies:
+- JIRA Python library
+- Pandas
+- Matplotlib
+- BeautifulSoup
+- dotenv
+"""
+
+# Import necessary libraries
 import base64
 import io
 import json
@@ -15,27 +40,29 @@ from bs4 import BeautifulSoup
 from dotenv import load_dotenv
 from jira import JIRA
 
-# Load environment variables
+# Load environment variables from a .env file
 load_dotenv()
 
-# Logging configuration
+# Configure logging to display information and error messages
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 def get_jira_connection(server, email, token):
-    """Establish connection to JIRA server."""
+    """Establish a connection to the JIRA server."""
     return JIRA(server=server, basic_auth=(email, token))
 
 def send_html_email(subject, sender_email, receiver_email, smtp_server, smtp_port, smtp_username, smtp_password, html_content):
-    """Send HTML email using SMTP."""
+    """Send an HTML email using SMTP."""
     msg = MIMEMultipart('alternative')
     msg['Subject'] = subject
     msg['From'] = sender_email
     msg['To'] = receiver_email
 
+    # Attach the HTML content to the email
     part2 = MIMEText(html_content, 'html')
     msg.attach(part2)
 
     try:
+        # Connect to the SMTP server and send the email
         with smtplib.SMTP(smtp_server, smtp_port) as server:
             server.starttls()
             server.login(smtp_username, smtp_password)
@@ -45,7 +72,7 @@ def send_html_email(subject, sender_email, receiver_email, smtp_server, smtp_por
         logging.error(f"Error sending email: {e}")
 
 def convert_worklogs_to_json(df):
-    """Convert worklog DataFrame to JSON structure."""
+    """Convert worklog DataFrame to a JSON structure."""
     json_data = {}
     grouped_epics = df.groupby(['Epic Key', 'Epic Name', 'Epic Labels'])
 
@@ -80,17 +107,17 @@ def convert_worklogs_to_json(df):
 def time_to_hours(time_str):
     """Convert JIRA time string to hours."""
     if time_str.endswith('d'):
-        return float(time_str[:-1]) * 8
+        return float(time_str[:-1]) * 8  # Convert days to hours
     elif time_str.endswith('h'):
-        return float(time_str[:-1])
+        return float(time_str[:-1])  # Hours remain the same
     elif time_str.endswith('m'):
-        return float(time_str[:-1]) / 60
+        return float(time_str[:-1]) / 60  # Convert minutes to hours
     elif time_str.endswith('s'):
-        return float(time_str[:-1]) / 3600
+        return float(time_str[:-1]) / 3600  # Convert seconds to hours
     return 0
 
 def calculate_time_per_person_and_label(worklogs_df):
-    """Calculate time spent by person and label."""
+    """Calculate time spent by each person and label."""
     worklogs_df['Hours Spent'] = worklogs_df['Time Spent'].apply(time_to_hours)
     worklogs_df['Epic Label'] = worklogs_df['Epic Labels'].str.split(',')
     worklogs_df = worklogs_df.explode('Epic Label').reset_index(drop=True)
@@ -116,7 +143,7 @@ def filter_time_by_label(total_time_per_person_and_label, labels_to_exclude):
 
 def extract_worklogs_in_period(jira, project, start_date, end_date, epic_field_id):
     """
-    Extracts worklogs entered in a JIRA project within a given period.
+    Extract worklogs entered in a JIRA project within a given period.
 
     :param jira: Connected JIRA instance
     :param project: JIRA project key (e.g., 'PROJ')
@@ -161,16 +188,16 @@ def extract_worklogs_in_period(jira, project, start_date, end_date, epic_field_i
         epic_labels = []
         summary = issue.fields.summary
 
-        # Si c'est un Epic
+        # If it's an Epic
         if issue_type == 'Epic':
             epic_key = issue.key
             epic_name = issue.fields.summary
             epic_labels = issue.fields.labels if hasattr(issue.fields, 'labels') else []
         
-        # Si c'est une sous-tâche
+        # If it's a sub-task
         elif getattr(issue.fields.issuetype, 'subtask', False):
             try:
-                # Vérifier si la tâche parente existe
+                # Check if the parent task exists
                 parent = getattr(issue.fields, 'parent', None)
                 if parent is None:
                     logging.warning(f"Subtask {issue.key} has no parent task")
@@ -179,10 +206,10 @@ def extract_worklogs_in_period(jira, project, start_date, end_date, epic_field_i
                 parent_key = parent.key
                 parent_issue = jira.issue(parent_key)
                 
-                # Combiner le nom de la tâche mère avec la sous-tâche
+                # Combine the parent task name with the sub-task
                 summary = f"{parent_issue.fields.summary} --> {issue.fields.summary}"
                 
-                # Récupérer l'Epic de la tâche parente
+                # Retrieve the Epic of the parent task
                 parent_epic_key = getattr(parent_issue.fields, epic_field_id, None)
                 
                 if parent_epic_key:
@@ -205,7 +232,7 @@ def extract_worklogs_in_period(jira, project, start_date, end_date, epic_field_i
             except Exception as e:
                 logging.error(f"Error retrieving epic details for subtask {issue.key}: {str(e)}")
         
-        # Pour tous les autres types de tâches
+        # For all other task types
         else:
             epic_key = getattr(issue.fields, epic_field_id, None)
             if epic_key:
@@ -233,7 +260,7 @@ def extract_worklogs_in_period(jira, project, start_date, end_date, epic_field_i
             logging.error(f"Error retrieving worklogs for issue {issue.key}: {e}")
             continue  # Skip to the next issue in case of error
 
-        # Vérifier si la tâche a été terminée pendant la période
+        # Check if the task was completed during the period
         status_changes = jira.issue(issue.key, expand='changelog').changelog.histories
         done_during_period = False
         done_by = None
@@ -244,14 +271,14 @@ def extract_worklogs_in_period(jira, project, start_date, end_date, epic_field_i
                 for item in history.items:
                     if item.field == 'status' and item.toString == 'Done':
                         done_during_period = True
-                        # Récupérer l'auteur du changement
+                        # Retrieve the author of the change
                         author_name = history.author.displayName
                         done_by = ''.join(word[0].upper() for word in author_name.split())
                         break
                 if done_during_period:
                     break
 
-        # Si la tâche n'a pas de worklogs mais a été terminée pendant la période
+        # If the task has no worklogs but was completed during the period
         if done_during_period and not worklogs:
             data.append({
                 'Issue Key': issue.key,
@@ -260,13 +287,13 @@ def extract_worklogs_in_period(jira, project, start_date, end_date, epic_field_i
                 'Epic Key': epic_key,
                 'Epic Name': epic_name,
                 'Epic Labels': ', '.join(epic_labels) if epic_labels else '',
-                'Worklog Author': done_by,  # Utiliser l'auteur du changement
+                'Worklog Author': done_by,  # Use the author of the change
                 'Time Spent': '0h',
                 'Worklog Created': '',
                 'Worklog Comment': '[Completed during this period]'
             })
 
-        # Continuer avec le traitement existant des worklogs
+        # Continue with existing worklog processing
         for worklog in worklogs:
             try:
                 # Convert worklog.created to datetime
@@ -300,7 +327,7 @@ def extract_worklogs_in_period(jira, project, start_date, end_date, epic_field_i
 
 def calculate_time_per_person_and_epic(worklogs_df):
     """
-    Calculates the time spent by each person on each Epic.
+    Calculate the time spent by each person on each Epic.
 
     :param worklogs_df: DataFrame containing worklog data
     :return: DataFrame with time spent per person and per Epic
@@ -330,7 +357,7 @@ def calculate_time_per_person_and_epic(worklogs_df):
 
 def create_graph_from_filtered_df(filtered_df_exclude):
     """
-    Creates a pie chart from the filtered DataFrame.
+    Create a pie chart from the filtered DataFrame.
 
     :param filtered_df_exclude: DataFrame containing filtered data
     :return: None (displays the graph)
@@ -355,12 +382,13 @@ def create_graph_from_filtered_df(filtered_df_exclude):
 
     # Optionally, save the graph
     # plt.savefig('graph_filtered_df_pie.png')
+
 def create_csv_from_json(worklogs_json):
     """
-    Crée une chaîne CSV à partir des données JSON des journaux de travail.
+    Create a CSV string from JSON worklog data.
 
-    :param worklogs_json: Chaîne JSON contenant les données des journaux de travail
-    :return: Chaîne CSV contenant les détails des journaux de travail
+    :param worklogs_json: JSON string containing worklog data
+    :return: CSV string containing worklog details
     """
     import json
     import csv
@@ -394,52 +422,48 @@ def create_csv_from_json(worklogs_json):
 
     return csv_output.getvalue()
 
-# Exemple d'utilisation dans la fonction principale :
-# csv_output = create_csv_from_json(worklogs_json)
-# print(csv_output)  # Ou utilisez la chaîne CSV selon vos besoins
-
 def create_html_table_from_json(worklogs_json, filtered_df_exclude, filtered_df_include, planned_tasks_df):
     """
-    Creates an HTML table from worklog JSON data and planned tasks.
+    Create an HTML table from worklog JSON data and planned tasks.
     """
     import json
     import matplotlib.pyplot as plt
     import io
     import base64
 
-    # Fonction pour créer un graphique en camembert et le convertir en base64
-    def create_pie_chart(df, title,type_colour):
+    # Function to create a pie chart and convert it to base64
+    def create_pie_chart(df, title, type_colour):
         plt.figure(figsize=(8, 6))
         total_hours_per_label = df.groupby('Epic Label')['Hours Spent'].sum()
         
-        # Palette de couleurs pour les labels non standards (graphique de gauche)
+        # Color palette for non-standard labels (left chart)
         other_colors = [
-            '#FF9999',  # Rose clair
-            '#66B2FF',  # Bleu clair
-            '#99FF99',  # Vert clair
-            '#FFCC99',  # Orange clair
-            '#FF99CC',  # Rose foncé
-            '#99CCFF',  # Bleu pastel
-            '#FFB366',  # Orange foncé
-            '#99FF99',  # Vert pastel
-            '#FF99FF',  # Violet clair
+            '#FF9999',  # Light pink
+            '#66B2FF',  # Light blue
+            '#99FF99',  # Light green
+            '#FFCC99',  # Light orange
+            '#FF99CC',  # Dark pink
+            '#99CCFF',  # Pastel blue
+            '#FFB366',  # Dark orange
+            '#99FF99',  # Pastel green
+            '#FF99FF',  # Light violet
             '#99FFCC',  # Turquoise
         ]
         
-        # Définir les couleurs correspondant aux labels standards
+        # Define colors corresponding to standard labels
         standard_color_mapping = {
-            'B2C': '#3498db',      # Bleu
-            'B2B': '#e74c3c',      # Rouge
-            'Licensing': '#2ecc71', # Vert
-            'RI': '#f1c40f',       # Jaune
-            'No Label': '#95a5a6'  # Gris
+            'B2C': '#3498db',      # Blue
+            'B2B': '#e74c3c',      # Red
+            'Licensing': '#2ecc71', # Green
+            'RI': '#f1c40f',       # Yellow
+            'No Label': '#95a5a6'  # Gray
         }
         
-        # Créer la liste des couleurs en fonction du titre du graphique
-        if type_colour == 1:  # Graphique de droite
+        # Create the list of colors based on the chart title
+        if type_colour == 1:  # Right chart
             colors = [standard_color_mapping.get(label, '#95a5a6') for label in total_hours_per_label.index]
-        else:  # Graphique de gauche
-            # Trier les labels par ordre alphabétique et attribuer les couleurs
+        else:  # Left chart
+            # Sort labels alphabetically and assign colors
             sorted_labels = sorted(total_hours_per_label.index)
             color_dict = dict(zip(sorted_labels, other_colors[:len(sorted_labels)]))
             colors = [color_dict[label] for label in total_hours_per_label.index]
@@ -462,13 +486,13 @@ def create_html_table_from_json(worklogs_json, filtered_df_exclude, filtered_df_
         
         return base64.b64encode(image_png).decode()
 
-    # Créer les deux graphiques
-    chart1 = create_pie_chart(filtered_df_exclude, "Distribution du temps par projet",0)
-    chart2 = create_pie_chart(filtered_df_include, "Distribution du temps",1)
+    # Create the two charts
+    chart1 = create_pie_chart(filtered_df_exclude, "Time Distribution by Project", 0)
+    chart2 = create_pie_chart(filtered_df_include, "Time Distribution", 1)
 
     data = json.loads(worklogs_json)
     
-    # Créer une structure unifiée pour les worklogs et les tâches planifiées
+    # Create a unified structure for worklogs and planned tasks
     unified_data = {
         'B2C': {},
         'B2B': {},
@@ -477,10 +501,10 @@ def create_html_table_from_json(worklogs_json, filtered_df_exclude, filtered_df_
         'No Label': {}
     }
 
-    # D'abord, créer un dictionnaire des epics depuis worklogs_json pour avoir les labels corrects
-    epic_label_mapping = {}  # Pour stocker {epic_key: label}
+    # First, create a dictionary of epics from worklogs_json to have the correct labels
+    epic_label_mapping = {}  # To store {epic_key: label}
     
-    # Ajouter les worklogs à la structure unifiée et construire le mapping des epics
+    # Add worklogs to the unified structure and build the epic mapping
     for epic_key, epic_data in data.items():
         epic_labels = epic_data.get('Epic Labels', [])
         assigned_label = 'No Label'
@@ -498,16 +522,16 @@ def create_html_table_from_json(worklogs_json, filtered_df_exclude, filtered_df_
                 'planned_tasks': []
             }
 
-    # Ajouter les tâches planifiées en utilisant le mapping des epics existant
+    # Add planned tasks using the existing epic mapping
     for _, task in planned_tasks_df.iterrows():
         epic_info = task['Epic'].split(' - ', 1) if ' - ' in task['Epic'] else ['No Epic', task['Epic']]
         epic_key = epic_info[0]
         
-        # Si l'epic existe déjà dans notre mapping, utiliser son label
+        # If the epic already exists in our mapping, use its label
         if epic_key in epic_label_mapping:
             assigned_label = epic_label_mapping[epic_key]
         else:
-            # Sinon, déterminer le label à partir du nom de l'epic ou du résumé
+            # Otherwise, determine the label from the epic name or summary
             epic_name = epic_info[1]
             assigned_label = 'No Label'
             for label in ['B2C', 'B2B', 'Licensing', 'RI']:
@@ -515,7 +539,7 @@ def create_html_table_from_json(worklogs_json, filtered_df_exclude, filtered_df_
                     assigned_label = label
                     break
         
-        # Si l'epic n'existe pas encore dans la structure, l'ajouter
+        # If the epic does not yet exist in the structure, add it
         if epic_key not in unified_data[assigned_label]:
             unified_data[assigned_label][epic_key] = {
                 'epic_name': epic_info[1],
@@ -523,10 +547,10 @@ def create_html_table_from_json(worklogs_json, filtered_df_exclude, filtered_df_
                 'planned_tasks': []
             }
         
-        # Ajouter la tâche planifiée à l'epic
+        # Add the planned task to the epic
         unified_data[assigned_label][epic_key]['planned_tasks'].append(task)
 
-    # Générer le HTML
+    # Generate the HTML
     html = f"""
     <!DOCTYPE html>
     <html>
@@ -572,16 +596,13 @@ def create_html_table_from_json(worklogs_json, filtered_df_exclude, filtered_df_
         }}
         .task.planned {{
             background-color: #f8f9fa;
-            //border-left: 3px solid #007bff;
-            //padding-left: 5px;
-            //margin: 5px 0;
         }}
     </style>
     </head>
     <body>
     <div class="charts-container">
         <div class="chart">
-            <img src="data:image/png;base64,{chart1}" alt="Distribution hors B2C/B2B/RI">
+            <img src="data:image/png;base64,{chart1}" alt="Distribution excluding B2C/B2B/RI">
         </div>
         <div class="chart">
             <img src="data:image/png;base64,{chart2}" alt="Distribution B2C/B2B/RI">
@@ -591,10 +612,10 @@ def create_html_table_from_json(worklogs_json, filtered_df_exclude, filtered_df_
     """
 
     for label, epics in unified_data.items():
-        if epics:  # Si le label contient des epics
+        if epics:  # If the label contains epics
             label_class = f"label-{label.replace(' ', '')}"
             
-            # Compter le nombre total de lignes pour ce label
+            # Count the total number of rows for this label
             total_rows = len(epics)
             
             first_epic = True
@@ -610,10 +631,10 @@ def create_html_table_from_json(worklogs_json, filtered_df_exclude, filtered_df_
                 epic_name = epic_data['epic_name']
                 details = "<ul>"
                 
-                # Ajouter l'en-tête "Progress :"
-                details += '<li class="planned-tasks-header">Progress :</li>'
+                # Add the header "Progress:"
+                details += '<li class="planned-tasks-header">Progress:</li>'
                 
-                # Ajouter les worklogs
+                # Add the worklogs
                 for issue_key, issue_data in epic_data['worklogs'].items():
                     issue_summary = issue_data['Summary']
                     details += f'<li class="task"><a href="https://devialet.atlassian.net/browse/{issue_key}">{issue_key}</a>: {issue_summary}'
@@ -640,10 +661,10 @@ def create_html_table_from_json(worklogs_json, filtered_df_exclude, filtered_df_
                     
                     details += '</li>'
                 
-                # Ajouter les tâches planifiées
+                # Add the planned tasks
                 if epic_data['planned_tasks']:
-                    # Modifier "Planned Tasks:" en "Plan :"
-                    details += '<li class="planned-tasks-header">Plan :</li>'
+                    # Change "Planned Tasks:" to "Plan:"
+                    details += '<li class="planned-tasks-header">Plan:</li>'
                     for task in epic_data['planned_tasks']:
                         assignee_initials = ''.join(word[0].upper() for word in task['Assignee'].split()) if task['Assignee'] != 'Unassigned' else 'UA'
                         details += f'''
@@ -674,30 +695,30 @@ def create_html_table_from_json(worklogs_json, filtered_df_exclude, filtered_df_
 
 def get_planned_tasks(jira, project):
     """
-    Récupère toutes les tâches, sous-tâches et stories en To Do ou In Progress.
+    Retrieve all tasks, sub-tasks, and stories in To Do or In Progress status.
     
-    :param jira: Instance JIRA connectée
-    :param project: Clé du projet JIRA
-    :return: DataFrame avec les tâches planifiées
+    :param jira: Connected JIRA instance
+    :param project: JIRA project key
+    :return: DataFrame with planned tasks
     """
-    # JQL pour récupérer les tâches planifiées
+    # JQL to retrieve planned tasks
     jql_planned = f'''project = {project} 
         AND status in ("To Do", "In Progress") 
         AND issuetype in (Story, Sub-task, Task)
         ORDER BY status ASC, created DESC'''
 
     try:
-        # Champs à récupérer
-        fields = 'key,summary,status,issuetype,priority,assignee,customfield_10008'  # customfield_10008 est l'Epic Link
+        # Fields to retrieve
+        fields = 'key,summary,status,issuetype,priority,assignee,customfield_10008'  # customfield_10008 is the Epic Link
         
-        # Récupérer les issues
+        # Retrieve issues
         planned_issues = jira.search_issues(jql_planned, fields=fields, maxResults=False)
         logging.info(f"Retrieved {len(planned_issues)} planned issues")
 
-        # Préparer les données pour le DataFrame
+        # Prepare data for the DataFrame
         planned_data = []
         for issue in planned_issues:
-            # Récupérer l'epic
+            # Retrieve the epic
             epic_key = getattr(issue.fields, 'customfield_10008', None)
             epic_name = ''
             if epic_key:
@@ -707,7 +728,7 @@ def get_planned_tasks(jira, project):
                 except:
                     epic_name = 'Unknown Epic'
 
-            # Récupérer l'assignee
+            # Retrieve the assignee
             assignee = getattr(issue.fields.assignee, 'displayName', 'Unassigned') if issue.fields.assignee else 'Unassigned'
 
             planned_data.append({
@@ -720,10 +741,10 @@ def get_planned_tasks(jira, project):
                 'Epic': f"{epic_key} - {epic_name}" if epic_key else 'No Epic'
             })
 
-        # Créer le DataFrame
+        # Create the DataFrame
         df = pd.DataFrame(planned_data)
         
-        # Afficher le tableau dans la console
+        # Display the table in the console
         print("\n=== PLANNED TASKS ===")
         print(df.to_string(index=False))
         
@@ -735,34 +756,34 @@ def get_planned_tasks(jira, project):
 
 def send_html_email(html_content, start_date, end_date):
     """
-    Envoie le rapport HTML par email.
+    Send the HTML report via email.
     """
-    # Récupérer les informations d'email depuis les variables d'environnement
+    # Retrieve email information from environment variables
     smtp_server = os.getenv('SMTP_SERVER')
     smtp_port = int(os.getenv('SMTP_PORT', '587'))
     sender_email = os.getenv('SENDER_EMAIL')
     sender_password = os.getenv('SENDER_PASSWORD')
-    recipient_emails = os.getenv('RECIPIENT_EMAILS').split(',')  # Liste d'emails séparés par des virgules
+    recipient_emails = os.getenv('RECIPIENT_EMAILS').split(',')  # List of emails separated by commas
 
-    # Créer le message
+    # Create the message
     msg = MIMEMultipart('alternative')
-    msg['Subject'] = f'Rapport d\'activité ASD ({start_date} au {end_date})'
+    msg['Subject'] = f'ASD Activity Report ({start_date} to {end_date})'
     msg['From'] = sender_email
     msg['To'] = ', '.join(recipient_emails)
 
-    # Ajouter le contenu HTML
+    # Attach the HTML content
     msg.attach(MIMEText(html_content, 'html'))
 
     try:
-        # Connexion au serveur SMTP
+        # Connect to the SMTP server
         with smtplib.SMTP(smtp_server, smtp_port) as server:
             server.starttls()
             server.login(sender_email, sender_password)
             server.send_message(msg)
-        logging.info("Email envoyé avec succès")
+        logging.info("Email sent successfully")
         return True
     except Exception as e:
-        logging.error(f"Erreur lors de l'envoi de l'email: {str(e)}")
+        logging.error(f"Error sending email: {str(e)}")
         return False
 
 def main():
@@ -791,7 +812,7 @@ def main():
         start_date = (today - timedelta(days=today.weekday() + 7)).strftime('%Y-%m-%d')  # Last Monday
         end_date = (today + timedelta(days=4 - today.weekday())).strftime('%Y-%m-%d')    # This Friday
 
-        # Récupérer les tâches planifiées
+        # Retrieve planned tasks
         planned_tasks_df = get_planned_tasks(jira, project_key)
 
         logging.info(f"Extracting worklogs for project {project_key} from {start_date} to {end_date}.")
@@ -818,14 +839,14 @@ def main():
             worklogs_json = convert_worklogs_to_json(worklogs_df)
             csv_output = create_csv_from_json(worklogs_json)
             
-            # Calculer les données pour les graphiques
+            # Calculate data for charts
             total_time_per_person_and_label = calculate_time_per_person_and_label(worklogs_df)
             filtered_df_exclude, filtered_df_include = filter_time_by_label(
                 total_time_per_person_and_label, 
                 ['B2C', 'B2B', 'RI', 'Licensing']
             )
             
-            # Créer le tableau HTML avec les graphiques et les tâches planifiées
+            # Create the HTML table with charts and planned tasks
             html_table = create_html_table_from_json(
                 worklogs_json,
                 filtered_df_exclude,
@@ -858,11 +879,11 @@ def main():
                 f.write(worklogs_json)
             logging.info(f"Worklogs JSON saved to {json_file}.")
 
-            # Envoyer l'email avec le rapport HTML
+            # Send the email with the HTML report
             email_sent = send_html_email(html_table, start_date, end_date)
             
             if not email_sent:
-                logging.error("Échec de l'envoi de l'email")
+                logging.error("Failed to send the email")
                 sys.exit(1)
         else:
             logging.info("No worklogs found for the specified period.")
