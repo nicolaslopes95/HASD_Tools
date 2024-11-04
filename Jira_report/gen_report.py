@@ -723,7 +723,7 @@ def create_html_table_from_json(worklogs_json, filtered_df_exclude, filtered_df_
                 
                 for task in epic_data['Planned Tasks']:
                     if task['Type'] == 'Sub-task':
-                        parent_key = task['Epic'].split(' - ')[0]
+                        parent_key = task['Parent Key']
                         if parent_key not in tasks_by_parent:
                             tasks_by_parent[parent_key] = []
                         tasks_by_parent[parent_key].append(task)
@@ -736,7 +736,7 @@ def create_html_table_from_json(worklogs_json, filtered_df_exclude, filtered_df_
                         # Get the parent task info from the first subtask
                         parent_info = {
                             'Key': parent_key,
-                            'Summary': subtasks[0]['Epic'].split(' - ')[1] if ' - ' in subtasks[0]['Epic'] else 'Unknown Parent Task',
+                            'Summary': subtasks[0]['Parent Summary'],
                             'Status': 'Not in planned tasks',  # or fetch from JIRA if needed
                             'Assignee': 'Unassigned',
                             'Type': 'Task'
@@ -851,22 +851,27 @@ def get_planned_tasks(jira, project):
             epic_key = None
             epic_name = ''
             epic_labels = []
+            parent_key = None
+            parent_summary = None
 
             # Handle sub-tasks
             if issue.fields.issuetype.subtask:
                 try:
                     # Get parent task
-                    parent_key = issue.fields.parent.key
-                    parent_issue = jira.issue(parent_key)
-                    
-                    # Get epic from parent
-                    epic_key = getattr(parent_issue.fields, 'customfield_10008', None)
-                    if epic_key:
-                        epic_details = get_epic_details(epic_key)
-                        epic_name = epic_details['name']
-                        epic_labels = epic_details['labels']
-                    else:
-                        epic_name = 'No Epic'
+                    parent = issue.fields.parent
+                    if parent:
+                        parent_key = parent.key
+                        parent_issue = jira.issue(parent_key)
+                        parent_summary = parent_issue.fields.summary
+                        
+                        # Get epic from parent
+                        epic_key = getattr(parent_issue.fields, 'customfield_10008', None)
+                        if epic_key:
+                            epic_details = get_epic_details(epic_key)
+                            epic_name = epic_details['name']
+                            epic_labels = epic_details['labels']
+                        else:
+                            epic_name = 'No Epic'
                 except Exception as e:
                     logging.warning(f"Error processing parent for subtask {issue.key}: {str(e)}")
                     epic_key = None
@@ -890,7 +895,9 @@ def get_planned_tasks(jira, project):
                 'Summary': issue.fields.summary,
                 'Assignee': assignee,
                 'Epic': f"{epic_key} - {epic_name}" if epic_key else 'No Epic',
-                'Epic Labels': ', '.join(epic_labels) if epic_labels else ''
+                'Epic Labels': ', '.join(epic_labels) if epic_labels else '',
+                'Parent Key': parent_key,
+                'Parent Summary': parent_summary
             })
 
         # Create the DataFrame
