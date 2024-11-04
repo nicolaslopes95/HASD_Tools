@@ -1,9 +1,9 @@
 """
 JIRA Report Generator
 
-This script connects to a JIRA instance to extract worklog data for a specified project within a given date range. 
-It processes the worklogs to calculate time spent by each person on various tasks and epics, and generates 
-HTML reports, CSV files, and JSON outputs. The script also includes functionality to send the generated report 
+This script connects to a JIRA instance to extract worklog data for a specified project within a given date range.
+It processes the worklogs to calculate time spent by each person on various tasks and epics and generates
+HTML reports, CSV files, and JSON outputs. The script also includes functionality to send the generated report
 via email.
 
 Key Features:
@@ -12,6 +12,8 @@ Key Features:
 - Converts worklogs to JSON format for easy manipulation.
 - Calculates time spent per person and per epic.
 - Generates visual reports in HTML format with pie charts.
+- Groups all tasks (planned and unplanned) by their respective epics.
+- Ensures "No Label" category only includes epics without any labels.
 - Sends the report via email using SMTP.
 
 Dependencies:
@@ -107,14 +109,15 @@ def convert_worklogs_to_json(df):
 def time_to_hours(time_str):
     """Convert JIRA time string to hours."""
     if time_str.endswith('d'):
-        return float(time_str[:-1]) * 8  # Convert days to hours
+        return float(time_str[:-1]) * 8  # 1 day = 8 hours
     elif time_str.endswith('h'):
-        return float(time_str[:-1])  # Hours remain the same
+        return float(time_str[:-1])
     elif time_str.endswith('m'):
-        return float(time_str[:-1]) / 60  # Convert minutes to hours
+        return float(time_str[:-1]) / 60
     elif time_str.endswith('s'):
-        return float(time_str[:-1]) / 3600  # Convert seconds to hours
-    return 0
+        return float(time_str[:-1]) / 3600
+    else:
+        return 0
 
 def calculate_time_per_person_and_label(worklogs_df):
     """Calculate time spent by each person and label."""
@@ -425,6 +428,13 @@ def create_csv_from_json(worklogs_json):
 def create_html_table_from_json(worklogs_json, filtered_df_exclude, filtered_df_include, planned_tasks_df):
     """
     Create an HTML table from worklog JSON data and planned tasks.
+    Groups all tasks by epic and their labels. Only epics without labels are grouped under "No Label".
+
+    :param worklogs_json: JSON string containing worklog data
+    :param filtered_df_exclude: DataFrame with filtered labels to exclude B2C/B2B/RI/Licensing
+    :param filtered_df_include: DataFrame with filtered labels including B2C/B2B/RI/Licensing
+    :param planned_tasks_df: DataFrame containing planned tasks
+    :return: HTML string representing the report
     """
     import json
     import matplotlib.pyplot as plt
@@ -436,42 +446,23 @@ def create_html_table_from_json(worklogs_json, filtered_df_exclude, filtered_df_
         plt.figure(figsize=(8, 6))
         total_hours_per_label = df.groupby('Epic Label')['Hours Spent'].sum()
         
-        # Color palette for non-standard labels (left chart)
-        other_colors = [
-            '#FF9999',  # Light pink
-            '#66B2FF',  # Light blue
-            '#99FF99',  # Light green
-            '#FFCC99',  # Light orange
-            '#FF99CC',  # Dark pink
-            '#99CCFF',  # Pastel blue
-            '#FFB366',  # Dark orange
-            '#99FF99',  # Pastel green
-            '#FF99FF',  # Light violet
-            '#99FFCC',  # Turquoise
-        ]
-        
         # Define colors corresponding to standard labels
         standard_color_mapping = {
-            'B2C': '#3498db',      # Blue
-            'B2B': '#e74c3c',      # Red
+            'B2C': '#3498db',       # Blue
+            'B2B': '#e74c3c',       # Red
             'Licensing': '#2ecc71', # Green
-            'RI': '#f1c40f',       # Yellow
-            'No Label': '#95a5a6'  # Gray
+            'RI': '#f1c40f',        # Yellow
+            'No Label': '#95a5a6'   # Gray
         }
         
-        # Create the list of colors based on the chart title
-        if type_colour == 1:  # Right chart
-            colors = [standard_color_mapping.get(label, '#95a5a6') for label in total_hours_per_label.index]
-        else:  # Left chart
-            # Sort labels alphabetically and assign colors
-            sorted_labels = sorted(total_hours_per_label.index)
-            color_dict = dict(zip(sorted_labels, other_colors[:len(sorted_labels)]))
-            colors = [color_dict[label] for label in total_hours_per_label.index]
+        # Assign colors based on the label
+        colors = [standard_color_mapping.get(label, '#95a5a6') for label in total_hours_per_label.index]
         
         plt.pie(total_hours_per_label.values, 
                 labels=total_hours_per_label.index, 
                 autopct='%1.1f%%', 
-                colors=colors)
+                colors=colors,
+                startangle=90)
         
         plt.title(title)
         plt.axis('equal')
@@ -488,67 +479,115 @@ def create_html_table_from_json(worklogs_json, filtered_df_exclude, filtered_df_
 
     # Create the two charts
     chart1 = create_pie_chart(filtered_df_exclude, "Time Distribution by Project", 0)
-    chart2 = create_pie_chart(filtered_df_include, "Time Distribution", 1)
+    chart2 = create_pie_chart(filtered_df_include, "Time Distribution B2C/B2B/RI/Licensing", 1)
 
     data = json.loads(worklogs_json)
     
     # Create a unified structure for worklogs and planned tasks
-    unified_data = {
+    unified_data = {}
+
+    # Function to determine the label category for an epic
+    def get_label_category(labels):
+        for label in ['B2C', 'B2B', 'RI', 'Licensing']:
+            if label in labels:
+                return label
+        return 'No Label'
+
+    # Collect epic information from worklogs
+    for epic_key, epic_data in data.items():
+        epic_name = epic_data['Epic Name']
+        epic_labels = epic_data.get('Epic Labels', "")
+        if isinstance(epic_labels, str):
+            epic_labels = [label.strip() for label in epic_labels.split(',') if label.strip()]
+        elif isinstance(epic_labels, list):
+            epic_labels = [label.strip() for label in epic_labels if label.strip()]
+        else:
+            epic_labels = []
+        
+        # Determine the category
+        category = get_label_category(epic_labels)
+        
+        # Ensure the category is added to unified_data
+        if epic_key not in unified_data:
+            unified_data[epic_key] = {
+                'Epic Name': epic_name,
+                'Category': category,  # Ensure this key is always set
+                'Labels': ', '.join(epic_labels) if epic_labels else '',
+                'Worklogs': epic_data.get('Issues', {}),
+                'Planned Tasks': []
+            }
+        else:
+            # If the epic already exists, ensure the category is updated
+            unified_data[epic_key]['Category'] = category
+
+    # Debugging: Print the unified_data to check for missing categories
+    print("Unified Data:", unified_data)
+
+    # Collect epic information from planned tasks
+    for _, task in planned_tasks_df.iterrows():
+        if ' - ' in task['Epic']:
+            epic_key, epic_name = task['Epic'].split(' - ', 1)
+        else:
+            epic_key = 'No Epic'
+            epic_name = task['Epic']
+
+        if epic_key not in unified_data and epic_key != 'No Epic':
+            # Determine label category
+            labels = [label.strip() for label in task['Epic Labels'].split(',') if label.strip()] if task['Epic Labels'] else []
+            category = get_label_category(labels)
+            unified_data[epic_key] = {
+                'Epic Name': epic_name,
+                'Category': category,
+                'Labels': ', '.join(labels) if labels else '',
+                'Worklogs': {},
+                'Planned Tasks': []
+            }
+        
+        if epic_key in unified_data:
+            unified_data[epic_key]['Planned Tasks'].append(task)
+        else:
+            # Epics with No Epic go under "No Epic"
+            if 'No Epic' not in unified_data:
+                unified_data['No Epic'] ={
+                    'Epic Name': 'No Epic',
+                    'Category': 'No Label',
+                    'Labels': '',
+                    'Worklogs': {},
+                    'Planned Tasks': []
+                }
+
+            #if epic_key not in unified_data['No Label']:
+            #    unified_data['No Label'][epic_key] = {
+            #        'Epic Name': epic_name,
+            #        'Category': 'No Label',
+            #        'Labels': '',
+            #        'Worklogs': {},
+            #        'Planned Tasks': []
+            #    }
+            unified_data['No Epic']['Planned Tasks'].append(task)
+
+    # Filter out epics with no labels except truly "No Label" category
+    final_unified_data = {
         'B2C': {},
         'B2B': {},
-        'Licensing': {},
         'RI': {},
+        'Licensing': {},
         'No Label': {}
     }
 
-    # First, create a dictionary of epics from worklogs_json to have the correct labels
-    epic_label_mapping = {}  # To store {epic_key: label}
-    
-    # Add worklogs to the unified structure and build the epic mapping
-    for epic_key, epic_data in data.items():
-        epic_labels = epic_data.get('Epic Labels', [])
-        assigned_label = 'No Label'
-        for label in ['B2C', 'B2B', 'Licensing', 'RI']:
-            if label in epic_labels:
-                assigned_label = label
-                break
-        
-        epic_label_mapping[epic_key] = assigned_label
-        
-        if epic_key not in unified_data[assigned_label]:
-            unified_data[assigned_label][epic_key] = {
-                'epic_name': epic_data['Epic Name'],
-                'worklogs': epic_data['Issues'],
-                'planned_tasks': []
-            }
-
-    # Add planned tasks using the existing epic mapping
-    for _, task in planned_tasks_df.iterrows():
-        epic_info = task['Epic'].split(' - ', 1) if ' - ' in task['Epic'] else ['No Epic', task['Epic']]
-        epic_key = epic_info[0]
-        
-        # If the epic already exists in our mapping, use its label
-        if epic_key in epic_label_mapping:
-            assigned_label = epic_label_mapping[epic_key]
+    for epic_key, info in unified_data.items():
+        category = info['Category']
+        print(f"Category: {category}")
+        if category in final_unified_data:
+            final_unified_data[category][epic_key] = info
         else:
-            # Otherwise, determine the label from the epic name or summary
-            epic_name = epic_info[1]
-            assigned_label = 'No Label'
-            for label in ['B2C', 'B2B', 'Licensing', 'RI']:
-                if label.lower() in epic_name.lower() or label.lower() in task['Summary'].lower():
-                    assigned_label = label
-                    break
-        
-        # If the epic does not yet exist in the structure, add it
-        if epic_key not in unified_data[assigned_label]:
-            unified_data[assigned_label][epic_key] = {
-                'epic_name': epic_info[1],
-                'worklogs': {},
-                'planned_tasks': []
-            }
-        
-        # Add the planned task to the epic
-        unified_data[assigned_label][epic_key]['planned_tasks'].append(task)
+            # Should not happen, but in case of unexpected category
+            final_unified_data['No Label'][epic_key] = info
+
+    # Remove 'No Label' epics from other categories if mistakenly added
+    for category in ['B2C', 'B2B', 'RI', 'Licensing']:
+        if 'No Label' in final_unified_data[category]:
+            del final_unified_data[category]['No Label']
 
     # Generate the HTML
     html = f"""
@@ -572,8 +611,8 @@ def create_html_table_from_json(worklogs_json, filtered_df_exclude, filtered_df_
         }}
         .label-B2C {{ background-color: #3498db; }}
         .label-B2B {{ background-color: #e74c3c; }}
-        .label-Licensing {{ background-color: #2ecc71; }}
         .label-RI {{ background-color: #f1c40f; }}
+        .label-Licensing {{ background-color: #2ecc71; }}
         .label-NoLabel {{ background-color: #95a5a6; }}
         .charts-container {{
             display: flex;
@@ -602,44 +641,57 @@ def create_html_table_from_json(worklogs_json, filtered_df_exclude, filtered_df_
     <body>
     <div class="charts-container">
         <div class="chart">
-            <img src="data:image/png;base64,{chart1}" alt="Distribution excluding B2C/B2B/RI">
+            <img src="data:image/png;base64,{chart1}" alt="Distribution by Project">
         </div>
         <div class="chart">
-            <img src="data:image/png;base64,{chart2}" alt="Distribution B2C/B2B/RI">
+            <img src="data:image/png;base64,{chart2}" alt="Distribution B2C/B2B/RI/Licensing">
         </div>
     </div>
     <table>
+    <tr>
+        <th>Label</th>
+        <th>Epic</th>
+        <th>Details</th>
+    </tr>
     """
 
-    for label, epics in unified_data.items():
-        if epics:  # If the label contains epics
-            label_class = f"label-{label.replace(' ', '')}"
-            
-            # Count the total number of rows for this label
-            total_rows = len(epics)
-            
-            first_epic = True
-            for epic_key, epic_data in epics.items():
-                if not first_epic:
-                    html += "<tr>"
-                else:
-                    html += f"""
-                    <tr>
-                        <td class="label-cell {label_class}" rowspan="{total_rows}">{label}</td>
-                    """
-                
-                epic_name = epic_data['epic_name']
-                details = "<ul>"
-                
-                # Add the header "Progress:"
+    # Iterate through each label category
+    for label, epics in final_unified_data.items():
+        if not epics:
+            continue  # Skip if no epics in this category
+        label_class = f"label-{label.replace(' ', '')}"
+        
+        # Count the total number of epics for rowspan
+        total_rows = len(epics)
+        
+        first_epic = True
+        for epic_key, epic_data in epics.items():
+            # Start a new table row
+            if first_epic:
+                html += f"""
+                <tr>
+                    <td class="label-cell {label_class}" rowspan="{total_rows}">{label}</td>
+                """
+                first_epic = False
+            else:
+                html += "<tr>"
+
+            # Epic name
+            epic_name = epic_data['Epic Name']
+
+            # Begin details cell
+            details = "<ul>"
+
+            # Add the header "Progress:" if there are worklogs
+            if epic_data['Worklogs']:
                 details += '<li class="planned-tasks-header">Progress:</li>'
                 
-                # Add the worklogs
-                for issue_key, issue_data in epic_data['worklogs'].items():
+                # Iterate through each issue in worklogs
+                for issue_key, issue_data in epic_data['Worklogs'].items():
                     issue_summary = issue_data['Summary']
                     details += f'<li class="task"><a href="https://devialet.atlassian.net/browse/{issue_key}">{issue_key}</a>: {issue_summary}'
                     
-                    # Group worklogs by whether they have comments
+                    # Collect authors without comments and worklogs with comments
                     worklogs_with_comments = []
                     authors_without_comments = set()
                     
@@ -660,30 +712,88 @@ def create_html_table_from_json(worklogs_json, filtered_df_exclude, filtered_df_
                         details += f'<div class="worklog">{worklog["Worklog Comment"]} [{initials}]</div>'
                     
                     details += '</li>'
+            
+            # Add the header "Plan:" if there are planned tasks
+            if epic_data['Planned Tasks']:
+                details += '<li class="planned-tasks-header">Plan:</li>'
                 
-                # Add the planned tasks
-                if epic_data['planned_tasks']:
-                    # Change "Planned Tasks:" to "Plan:"
-                    details += '<li class="planned-tasks-header">Plan:</li>'
-                    for task in epic_data['planned_tasks']:
-                        assignee_initials = ''.join(word[0].upper() for word in task['Assignee'].split()) if task['Assignee'] != 'Unassigned' else 'UA'
-                        details += f'''
-                            <li class="task planned">
-                                <a href="https://devialet.atlassian.net/browse/{task['Key']}">{task['Key']}</a>: 
-                                {task['Summary']} 
-                                <span class="author">[{assignee_initials}]</span>
-                                <span style="color: #666;">({task['Status']})</span>
-                            </li>
-                        '''
+                # Group tasks by parent (for sub-tasks)
+                tasks_by_parent = {}
+                standalone_tasks = []
                 
-                details += "</ul>"
+                for task in epic_data['Planned Tasks']:
+                    if task['Type'] == 'Sub-task':
+                        parent_key = task['Epic'].split(' - ')[0]
+                        if parent_key not in tasks_by_parent:
+                            tasks_by_parent[parent_key] = []
+                        tasks_by_parent[parent_key].append(task)
+                    else:
+                        standalone_tasks.append(task)
                 
-                html += f"""
-                    <td>{epic_name}</td>
-                    <td>{details}</td>
-                </tr>
-                """
-                first_epic = False
+                # First, ensure all parent tasks are included
+                for parent_key, subtasks in tasks_by_parent.items():
+                    if not any(task['Key'] == parent_key for task in standalone_tasks):
+                        # Get the parent task info from the first subtask
+                        parent_info = {
+                            'Key': parent_key,
+                            'Summary': subtasks[0]['Epic'].split(' - ')[1] if ' - ' in subtasks[0]['Epic'] else 'Unknown Parent Task',
+                            'Status': 'Not in planned tasks',  # or fetch from JIRA if needed
+                            'Assignee': 'Unassigned',
+                            'Type': 'Task'
+                        }
+                        standalone_tasks.append(parent_info)
+
+                # Now display all tasks with their subtasks
+                for task in standalone_tasks:
+                    assignee_initials = ''.join(word[0].upper() for word in task['Assignee'].split()) if task['Assignee'] != 'Unassigned' else 'UA'
+                    details += f'''
+                        <li class="task planned">
+                            <a href="https://devialet.atlassian.net/browse/{task['Key']}">{task['Key']}</a>: 
+                            {task['Summary']} 
+                            <span class="author">[{assignee_initials}]</span>
+                            <span style="color: #666;">({task['Status']})</span>
+                        </li>
+                    '''
+                    
+                    # Add sub-tasks if any
+                    if task['Key'] in tasks_by_parent:
+                        for subtask in tasks_by_parent[task['Key']]:
+                            assignee_initials = ''.join(word[0].upper() for word in subtask['Assignee'].split()) if subtask['Assignee'] != 'Unassigned' else 'UA'
+                            details += f'''
+                                <li class="subtask planned">
+                                    <a href="https://devialet.atlassian.net/browse/{subtask['Key']}">{subtask['Key']}</a>: 
+                                    {subtask['Summary']} 
+                                    <span class="author">[{assignee_initials}]</span>
+                                    <span style="color: #666;">({subtask['Status']})</span>
+                                </li>
+                            '''
+            
+            # Add orphaned subtasks (those without a parent in standalone_tasks)
+            orphaned_subtasks = []
+            for parent_key, subtasks in tasks_by_parent.items():
+                if not any(task['Key'] == parent_key for task in standalone_tasks):
+                    orphaned_subtasks.extend(subtasks)
+
+            for subtask in orphaned_subtasks:
+                assignee_initials = ''.join(word[0].upper() for word in subtask['Assignee'].split()) if subtask['Assignee'] != 'Unassigned' else 'UA'
+                details += f'''
+                    <li class="subtask planned">
+                        <a href="https://devialet.atlassian.net/browse/{subtask['Key']}">{subtask['Key']}</a>: 
+                        {subtask['Summary']} 
+                        <span class="author">[{assignee_initials}]</span>
+                        <span style="color: #666;">({subtask['Status']})</span>
+                        <span style="color: #ff6b6b;">(Orphaned subtask)</span>
+                    </li>
+                '''
+
+            details += "</ul>"
+
+            # Close the details cell and complete the row
+            html += f"""
+                <td>{epic_name}</td>
+                <td>{details}</td>
+            </tr>
+            """
 
     html += """
     </table>
@@ -696,7 +806,9 @@ def create_html_table_from_json(worklogs_json, filtered_df_exclude, filtered_df_
 def get_planned_tasks(jira, project):
     """
     Retrieve all tasks, sub-tasks, and stories in To Do or In Progress status.
-    
+    Groups sub-tasks with their parent tasks under the same epic and labels.
+    Retrieves and includes epic labels.
+
     :param jira: Connected JIRA instance
     :param project: JIRA project key
     :return: DataFrame with planned tasks
@@ -709,28 +821,67 @@ def get_planned_tasks(jira, project):
 
     try:
         # Fields to retrieve
-        fields = 'key,summary,status,issuetype,priority,assignee,customfield_10008'  # customfield_10008 is the Epic Link
+        fields = 'key,summary,status,issuetype,priority,assignee,customfield_10008,labels,parent'
         
         # Retrieve issues
         planned_issues = jira.search_issues(jql_planned, fields=fields, maxResults=False)
         logging.info(f"Retrieved {len(planned_issues)} planned issues")
 
+        # Cache for storing epic details to avoid repeated API calls
+        epic_cache = {}
+        
+        def get_epic_details(epic_key):
+            """Helper function to get epic details with caching"""
+            if epic_key:
+                if epic_key not in epic_cache:
+                    try:
+                        epic = jira.issue(epic_key)
+                        epic_cache[epic_key] = {
+                            'name': epic.fields.summary,
+                            'labels': epic.fields.labels if hasattr(epic.fields, 'labels') else []
+                        }
+                    except:
+                        epic_cache[epic_key] = {'name': 'Unknown Epic', 'labels': []}
+                return epic_cache[epic_key]
+            return {'name': 'No Epic', 'labels': []}
+
         # Prepare data for the DataFrame
         planned_data = []
         for issue in planned_issues:
-            # Retrieve the epic
-            epic_key = getattr(issue.fields, 'customfield_10008', None)
+            epic_key = None
             epic_name = ''
-            if epic_key:
-                try:
-                    epic = jira.issue(epic_key)
-                    epic_name = epic.fields.summary
-                except:
-                    epic_name = 'Unknown Epic'
+            epic_labels = []
 
-            # Retrieve the assignee
+            # Handle sub-tasks
+            if issue.fields.issuetype.subtask:
+                try:
+                    # Get parent task
+                    parent_key = issue.fields.parent.key
+                    parent_issue = jira.issue(parent_key)
+                    
+                    # Get epic from parent
+                    epic_key = getattr(parent_issue.fields, 'customfield_10008', None)
+                    if epic_key:
+                        epic_details = get_epic_details(epic_key)
+                        epic_name = epic_details['name']
+                        epic_labels = epic_details['labels']
+                    else:
+                        epic_name = 'No Epic'
+                except Exception as e:
+                    logging.warning(f"Error processing parent for subtask {issue.key}: {str(e)}")
+                    epic_key = None
+            else:
+                # For regular tasks
+                epic_key = getattr(issue.fields, 'customfield_10008', None)
+                if epic_key:
+                    epic_details = get_epic_details(epic_key)
+                    epic_name = epic_details['name']
+                    epic_labels = epic_details['labels']
+
+            # Get assignee
             assignee = getattr(issue.fields.assignee, 'displayName', 'Unassigned') if issue.fields.assignee else 'Unassigned'
 
+            # Add to planned data
             planned_data.append({
                 'Key': issue.key,
                 'Type': issue.fields.issuetype.name,
@@ -738,11 +889,15 @@ def get_planned_tasks(jira, project):
                 'Priority': issue.fields.priority.name,
                 'Summary': issue.fields.summary,
                 'Assignee': assignee,
-                'Epic': f"{epic_key} - {epic_name}" if epic_key else 'No Epic'
+                'Epic': f"{epic_key} - {epic_name}" if epic_key else 'No Epic',
+                'Epic Labels': ', '.join(epic_labels) if epic_labels else ''
             })
 
         # Create the DataFrame
         df = pd.DataFrame(planned_data)
+        
+        # Sort the DataFrame to group tasks by Epic
+        df = df.sort_values(['Epic', 'Type'])
         
         # Display the table in the console
         print("\n=== PLANNED TASKS ===")
@@ -823,21 +978,10 @@ def main():
             total_time_per_person_and_label, 
             ['B2C', 'B2B', 'RI', 'Licensing']
         )
-        #create_graph_from_filtered_df(filtered_df_exclude)
-        #create_graph_from_filtered_df(filtered_df_include)
 
-        # Display the table
-        print(worklogs_df)
-
-        # Optionally: save to CSV
-        csv_file = 'jira_worklogs.csv'
-        worklogs_df.to_csv(csv_file, index=False)
-        logging.info(f"Worklogs saved to {csv_file}.")
-
-        if not worklogs_df.empty:
+        if not worklogs_df.empty or not planned_tasks_df.empty:
             # Convert DataFrame to JSON
             worklogs_json = convert_worklogs_to_json(worklogs_df)
-            csv_output = create_csv_from_json(worklogs_json)
             
             # Calculate data for charts
             total_time_per_person_and_label = calculate_time_per_person_and_label(worklogs_df)
@@ -854,26 +998,13 @@ def main():
                 planned_tasks_df
             )
 
-            print(csv_output)
             # Save HTML to file
             html_file = 'worklogs_table.html'
             with open(html_file, 'w', encoding='utf-8') as f:
                 f.write(html_table)
             logging.info(f"HTML table saved to {html_file}")
-            # Print rendered HTML table to console
-            from bs4 import BeautifulSoup
             
-            # Parse and prettify the HTML for better console display
-            soup = BeautifulSoup(html_table, 'html.parser')
-            pretty_html = soup.prettify()
-            
-            print("\nRendered HTML Output:")
-            print(pretty_html)
-
-            # Display the JSON
-            print(worklogs_json)
-
-            # Optionally: save to a JSON file
+            # Save JSON to a file
             json_file = 'jira_worklogs.json'
             with open(json_file, 'w', encoding='utf-8') as f:
                 f.write(worklogs_json)
@@ -886,7 +1017,7 @@ def main():
                 logging.error("Failed to send the email")
                 sys.exit(1)
         else:
-            logging.info("No worklogs found for the specified period.")
+            logging.info("No worklogs or planned tasks found for the specified period.")
 
     except Exception as e:
         logging.exception(f"Error connecting to JIRA or processing worklogs: {e}")
