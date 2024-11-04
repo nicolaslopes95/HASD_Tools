@@ -446,7 +446,7 @@ def create_html_table_from_json(worklogs_json, filtered_df_exclude, filtered_df_
         plt.figure(figsize=(8, 6))
         total_hours_per_label = df.groupby('Epic Label')['Hours Spent'].sum()
         
-        # Define colors corresponding to standard labels
+        # Define standard colors for type_colour == 1
         standard_color_mapping = {
             'B2C': '#3498db',       # Blue
             'B2B': '#e74c3c',       # Red
@@ -455,8 +455,36 @@ def create_html_table_from_json(worklogs_json, filtered_df_exclude, filtered_df_
             'No Label': '#95a5a6'   # Gray
         }
         
-        # Assign colors based on the label
-        colors = [standard_color_mapping.get(label, '#95a5a6') for label in total_hours_per_label.index]
+        # Define a list of 20 distinct colors for type_colour == 0
+        color_palette = [
+            '#1f77b4',  # Blue
+            '#ff7f0e',  # Orange
+            '#2ca02c',  # Green
+            '#d62728',  # Red
+            '#9467bd',  # Purple
+            '#8c564b',  # Brown
+            '#e377c2',  # Pink
+            '#7f7f7f',  # Gray
+            '#bcbd22',  # Yellow-green
+            '#17becf',  # Cyan
+            '#aec7e8',  # Light blue
+            '#ffbb78',  # Light orange
+            '#98df8a',  # Light green
+            '#ff9896',  # Light red
+            '#c5b0d5',  # Light purple
+            '#c49c94',  # Light brown
+            '#f7b6d2',  # Light pink
+            '#c7c7c7',  # Light gray
+            '#dbdb8d',  # Light yellow-green
+            '#9edae5'   # Light cyan
+        ]
+        
+        if type_colour == 0:
+            # Use colors from the palette, cycling if needed
+            colors = [color_palette[i % len(color_palette)] for i in range(len(total_hours_per_label.index))]
+        else:
+            # Use standard colors for specific labels
+            colors = [standard_color_mapping.get(label, '#95a5a6') for label in total_hours_per_label.index]
         
         plt.pie(total_hours_per_label.values, 
                 labels=total_hours_per_label.index, 
