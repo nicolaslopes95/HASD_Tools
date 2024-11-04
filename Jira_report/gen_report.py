@@ -293,7 +293,7 @@ def extract_worklogs_in_period(jira, project, start_date, end_date, epic_field_i
                 'Worklog Author': done_by,  # Use the author of the change
                 'Time Spent': '0h',
                 'Worklog Created': '',
-                'Worklog Comment': '[Completed during this period]'
+                'Worklog Comment': '[Done]'
             })
 
         # Continue with existing worklog processing
@@ -549,7 +549,7 @@ def create_html_table_from_json(worklogs_json, filtered_df_exclude, filtered_df_
             unified_data[epic_key]['Category'] = category
 
     # Debugging: Print the unified_data to check for missing categories
-    print("Unified Data:", unified_data)
+    #print("Unified Data:", unified_data)
 
     # Collect epic information from planned tasks
     for _, task in planned_tasks_df.iterrows():
@@ -605,7 +605,7 @@ def create_html_table_from_json(worklogs_json, filtered_df_exclude, filtered_df_
 
     for epic_key, info in unified_data.items():
         category = info['Category']
-        print(f"Category: {category}")
+        #print(f"Category: {category}")
         if category in final_unified_data:
             final_unified_data[category][epic_key] = info
         else:
@@ -765,7 +765,7 @@ def create_html_table_from_json(worklogs_json, filtered_df_exclude, filtered_df_
                         parent_info = {
                             'Key': parent_key,
                             'Summary': subtasks[0]['Parent Summary'],
-                            'Status': 'Not in planned tasks',  # or fetch from JIRA if needed
+                            'Status': '',  # or fetch from JIRA if needed
                             'Assignee': 'Unassigned',
                             'Type': 'Task'
                         }
@@ -796,25 +796,25 @@ def create_html_table_from_json(worklogs_json, filtered_df_exclude, filtered_df_
                                 </li>
                             '''
             
-            # Add orphaned subtasks (those without a parent in standalone_tasks)
-            orphaned_subtasks = []
-            for parent_key, subtasks in tasks_by_parent.items():
-                if not any(task['Key'] == parent_key for task in standalone_tasks):
-                    orphaned_subtasks.extend(subtasks)
+                # Add orphaned subtasks (those without a parent in standalone_tasks)
+                orphaned_subtasks = []
+                for parent_key, subtasks in tasks_by_parent.items():
+                    if not any(task['Key'] == parent_key for task in standalone_tasks):
+                        orphaned_subtasks.extend(subtasks)
 
-            for subtask in orphaned_subtasks:
-                assignee_initials = ''.join(word[0].upper() for word in subtask['Assignee'].split()) if subtask['Assignee'] != 'Unassigned' else 'UA'
-                details += f'''
+                for subtask in orphaned_subtasks:
+                    assignee_initials = ''.join(word[0].upper() for word in subtask['Assignee'].split()) if subtask['Assignee'] != 'Unassigned' else 'UA'
+                    details += f'''
                     <li class="subtask planned">
                         <a href="https://devialet.atlassian.net/browse/{subtask['Key']}">{subtask['Key']}</a>: 
                         {subtask['Summary']} 
                         <span class="author">[{assignee_initials}]</span>
                         <span style="color: #666;">({subtask['Status']})</span>
                         <span style="color: #ff6b6b;">(Orphaned subtask)</span>
-                    </li>
-                '''
+                        </li>
+                        '''
 
-            details += "</ul>"
+                details += "</ul>"
 
             # Close the details cell and complete the row
             html += f"""
@@ -935,8 +935,8 @@ def get_planned_tasks(jira, project):
         df = df.sort_values(['Epic', 'Type'])
         
         # Display the table in the console
-        print("\n=== PLANNED TASKS ===")
-        print(df.to_string(index=False))
+        #print("\n=== PLANNED TASKS ===")
+        #  print(df.to_string(index=False))
         
         return df
 
@@ -976,6 +976,25 @@ def send_html_email(html_content, start_date, end_date):
         logging.error(f"Error sending email: {str(e)}")
         return False
 
+
+def get_dates_from_week_numbers(year, start_week, end_week):
+    """
+    Get start and end dates from week numbers.
+    
+    :param year: The year (e.g., 2024)
+    :param start_week: Starting week number (1-53)
+    :param end_week: Ending week number (1-53)
+    :return: Tuple of (start_date, end_date) in 'YYYY-MM-DD' format
+    """
+    # Create date object for start of start_week
+    start_date = datetime.strptime(f'{year}-W{start_week:02d}-1', '%Y-W%W-%w')
+    
+    # Create date object for end of end_week (Friday)
+    end_date = datetime.strptime(f'{year}-W{end_week:02d}-5', '%Y-W%W-%w')
+    
+    return start_date.strftime('%Y-%m-%d'), end_date.strftime('%Y-%m-%d')
+
+
 def main():
     # Load environment variables
     jira_server = os.getenv('JIRA_SERVER')
@@ -999,8 +1018,13 @@ def main():
         project_key = 'ASD'  # Replace with your project key or make it configurable
         # Get dates from last Monday to this Friday
         today = datetime.now()
-        start_date = (today - timedelta(days=today.weekday() + 7)).strftime('%Y-%m-%d')  # Last Monday
-        end_date = (today + timedelta(days=4 - today.weekday())).strftime('%Y-%m-%d')    # This Friday
+
+
+
+        #start_date = (today - timedelta(days=today.weekday() + 7)).strftime('%Y-%m-%d')  # Last Monday
+        #end_date = (today + timedelta(days=4 - today.weekday())).strftime('%Y-%m-%d')    # This Friday
+
+        start_date, end_date = get_dates_from_week_numbers(today.year, 44, 44);
 
         # Retrieve planned tasks
         planned_tasks_df = get_planned_tasks(jira, project_key)
@@ -1046,11 +1070,11 @@ def main():
             logging.info(f"Worklogs JSON saved to {json_file}.")
 
             # Send the email with the HTML report
-            email_sent = send_html_email(html_table, start_date, end_date)
+            #email_sent = send_html_email(html_table, start_date, end_date)
             
-            if not email_sent:
-                logging.error("Failed to send the email")
-                sys.exit(1)
+            #if not email_sent:
+            #    logging.error("Failed to send the email")
+            #    sys.exit(1)
         else:
             logging.info("No worklogs or planned tasks found for the specified period.")
 
