@@ -425,7 +425,7 @@ def create_csv_from_json(worklogs_json):
 
     return csv_output.getvalue()
 
-def create_html_table_from_json(worklogs_json, filtered_df_exclude, filtered_df_include, planned_tasks_df):
+def create_html_table_from_json(worklogs_json, filtered_df_exclude, filtered_df_include, planned_tasks_df, start_week, end_week):
     """
     Create an HTML table from worklog JSON data and planned tasks.
     Groups all tasks by epic and their labels. Only epics without labels are grouped under "No Label".
@@ -434,6 +434,8 @@ def create_html_table_from_json(worklogs_json, filtered_df_exclude, filtered_df_
     :param filtered_df_exclude: DataFrame with filtered labels to exclude B2C/B2B/RI/Licensing
     :param filtered_df_include: DataFrame with filtered labels including B2C/B2B/RI/Licensing
     :param planned_tasks_df: DataFrame containing planned tasks
+    :param start_week: Starting week number
+    :param end_week: Ending week number
     :return: HTML string representing the report
     """
     import json
@@ -617,6 +619,11 @@ def create_html_table_from_json(worklogs_json, filtered_df_exclude, filtered_df_
         if 'No Label' in final_unified_data[category]:
             del final_unified_data[category]['No Label']
 
+    if start_week == end_week:
+        title = f"HASD - W{start_week}"
+    else:
+        title = f"HASD - W{start_week} to W{end_week}"
+
     # Generate the HTML
     html = f"""
     <!DOCTYPE html>
@@ -664,9 +671,13 @@ def create_html_table_from_json(worklogs_json, filtered_df_exclude, filtered_df_
         .task.planned {{
             background-color: #f8f9fa;
         }}
+        h1 {{
+            text-align: center;
+        }}
     </style>
     </head>
     <body>
+    <h1>{title}</h1>
     <div class="charts-container">
         <div class="chart">
             <img src="data:image/png;base64,{chart1}" alt="Distribution by Project">
@@ -1024,7 +1035,9 @@ def main():
         #start_date = (today - timedelta(days=today.weekday() + 7)).strftime('%Y-%m-%d')  # Last Monday
         #end_date = (today + timedelta(days=4 - today.weekday())).strftime('%Y-%m-%d')    # This Friday
 
-        start_date, end_date = get_dates_from_week_numbers(today.year, 44, 44);
+        start_week = 44
+        end_week = 44
+        start_date, end_date = get_dates_from_week_numbers(today.year, start_week, end_week);
 
         # Retrieve planned tasks
         planned_tasks_df = get_planned_tasks(jira, project_key)
@@ -1054,7 +1067,9 @@ def main():
                 worklogs_json,
                 filtered_df_exclude,
                 filtered_df_include,
-                planned_tasks_df
+                planned_tasks_df,
+                start_week,
+                end_week
             )
 
             # Save HTML to file
