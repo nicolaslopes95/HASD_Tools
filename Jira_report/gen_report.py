@@ -1017,8 +1017,60 @@ def get_dates_from_week_numbers(year, start_week, end_week):
     
     return start_date.strftime('%Y-%m-%d'), end_date.strftime('%Y-%m-%d')
 
+def generate_time_per_person_and_label_table(time_per_person_and_label):
+    """
+    Generate an HTML table for time spent by each person and label.
+
+    :param time_per_person_and_label: DataFrame with time spent per person and label
+    :return: HTML string representing the table
+    """
+    # Filter out rows where 'Worklog Author' is initials
+    filtered_df = time_per_person_and_label[time_per_person_and_label['Worklog Author'].str.len() > 3]
+
+    # Pivot the DataFrame to have labels as columns and persons as rows
+    pivot_df = filtered_df.pivot(index='Worklog Author', columns='Epic Label', values='Hours Spent').fillna(0)
+
+    # Reorder columns based on the priority list
+    priority_labels = ['B2C', 'B2B', 'RI', 'Licensing', 'Team']
+    existing_labels = [label for label in priority_labels if label in pivot_df.columns]
+    other_labels = [label for label in pivot_df.columns if label not in priority_labels]
+    ordered_columns = existing_labels + other_labels
+    pivot_df = pivot_df[ordered_columns]
+
+    # Divide the results by 8 to convert hours to workdays
+    pivot_df = pivot_df / 8
+
+    html = """
+    <h2>Time Spent by Person and Label (in Workdays)</h2>
+    <table border="1" style="border-collapse: collapse;">
+        <tr>
+            <th>Person</th>
+    """
+    # Add column headers for each label
+    for label in pivot_df.columns:
+        html += f"<th>{label}</th>"
+    html += "</tr>"
+
+    # Add rows for each person
+    for person, row in pivot_df.iterrows():
+        html += f"<tr><td>{person}</td>"
+        for label in pivot_df.columns:
+            html += f"<td>{row[label]:.2f}</td>"
+        html += "</tr>"
+
+    html += "</table>"
+    return html
+
+import argparse
+import os
 
 def main():
+    # Parse command-line arguments
+    parser = argparse.ArgumentParser(description="Generate JIRA report")
+    parser.add_argument('--start-week', type=int, default=48, help="Starting week number (1-53), default is 47")
+    parser.add_argument('--end-week', type=int, default=48, help="Ending week number (1-53), default is 48")
+    args = parser.parse_args()
+
     # Load environment variables
     jira_server = os.getenv('JIRA_SERVER')
     jira_email = os.getenv('JIRA_EMAIL')
@@ -1039,17 +1091,15 @@ def main():
         logging.info("Successfully connected to JIRA.")
 
         project_key = 'ASD'  # Replace with your project key or make it configurable
-        # Get dates from last Monday to this Friday
         today = datetime.now()
 
+        start_week = args.start_week
+        end_week = args.end_week
+        start_date, end_date = get_dates_from_week_numbers(today.year, start_week, end_week)
 
-
-        #start_date = (today - timedelta(days=today.weekday() + 7)).strftime('%Y-%m-%d')  # Last Monday
-        #end_date = (today + timedelta(days=4 - today.weekday())).strftime('%Y-%m-%d')    # This Friday
-
-        start_week = 47
-        end_week = 48
-        start_date, end_date = get_dates_from_week_numbers(today.year, start_week, end_week);
+        # Create directory for the reports
+        report_dir = f"report_{today.year}_W{start_week}_W{end_week}"
+        os.makedirs(report_dir, exist_ok=True)
 
         # Retrieve planned tasks
         planned_tasks_df = get_planned_tasks(jira, project_key)
@@ -1084,7 +1134,14 @@ def main():
                 end_week
             )
 
-
+            # Generate the time per person and label table
+            time_per_person_and_label_table = generate_time_per_person_and_label_table(total_time_per_person_and_label)
+            
+            # Save the time per person and label table to a separate HTML file
+            time_per_person_and_label_file = os.path.join(report_dir, 'time_per_person_and_label.html')
+            with open(time_per_person_and_label_file, 'w', encoding='utf-8') as f:
+                f.write(time_per_person_and_label_table)
+            logging.info(f"Time per person and label table saved to {time_per_person_and_label_file}")
 
             # Charger les images
             image1 = Image.open('camembert1.png')  # Remplacez par le chemin de votre première image
@@ -1104,16 +1161,21 @@ def main():
             new_image.paste(image2, (width1, 0))  # Image de droite
 
             # Enregistrer l'image concaténée
-            new_image.save('image_gmail.png')
+            new_image_path = os.path.join(report_dir, 'image_gmail.png')
+            new_image.save(new_image_path)
+
+            # Remove temporary files
+            os.remove('camembert1.png')
+            os.remove('camembert2.png')
 
             # Save HTML to file
-            html_file = 'worklogs_table.html'
+            html_file = os.path.join(report_dir, 'worklogs_table.html')
             with open(html_file, 'w', encoding='utf-8') as f:
                 f.write(html_table)
             logging.info(f"HTML table saved to {html_file}")
             
             # Save JSON to a file
-            json_file = 'jira_worklogs.json'
+            json_file = os.path.join(report_dir, 'jira_worklogs.json')
             with open(json_file, 'w', encoding='utf-8') as f:
                 f.write(worklogs_json)
             logging.info(f"Worklogs JSON saved to {json_file}.")
