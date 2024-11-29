@@ -41,6 +41,7 @@ import pandas as pd
 from bs4 import BeautifulSoup
 from dotenv import load_dotenv
 from jira import JIRA
+from PIL import Image
 
 # Load environment variables from a .env file
 load_dotenv()
@@ -107,17 +108,18 @@ def convert_worklogs_to_json(df):
     return json.dumps(json_data, indent=4)
 
 def time_to_hours(time_str):
-    """Convert JIRA time string to hours."""
-    if time_str.endswith('d'):
-        return float(time_str[:-1]) * 8  # 1 day = 8 hours
-    elif time_str.endswith('h'):
-        return float(time_str[:-1])
-    elif time_str.endswith('m'):
-        return float(time_str[:-1]) / 60
-    elif time_str.endswith('s'):
-        return float(time_str[:-1]) / 3600
-    else:
-        return 0
+    total_hours = 0
+    time_str = time_str.strip()
+    
+    if 'd' in time_str:
+        days, time_str = time_str.split('d')
+        total_hours += float(days.strip()) * 8  # Assuming 1 day = 8 hours
+    
+    if 'h' in time_str:
+        hours = time_str.replace('h', '').strip()
+        total_hours += float(hours)
+    
+    return total_hours
 
 def calculate_time_per_person_and_label(worklogs_df):
     """Calculate time spent by each person and label."""
@@ -336,17 +338,20 @@ def calculate_time_per_person_and_epic(worklogs_df):
     :return: DataFrame with time spent per person and per Epic
     """
     # Convert 'Time Spent' to hours
-    def time_to_hours(time_str):
-        if time_str.endswith('d'):
-            return float(time_str[:-1]) * 8  # 1 day = 8 hours
-        elif time_str.endswith('h'):
-            return float(time_str[:-1])
-        elif time_str.endswith('m'):
-            return float(time_str[:-1]) / 60
-        elif time_str.endswith('s'):
-            return float(time_str[:-1]) / 3600
-        else:
-            return 0
+    #def time_to_hours(time_str):
+    #    if time_str.endswith('d'):
+    #        return float(time_str[:-1]) * 8  # 1 day = 8 hours
+    #    elif time_str.endswith('h'):
+    #        return float(time_str[:-1])
+    #   elif time_str.endswith('m'):
+    #        return float(time_str[:-1]) / 60
+    #    elif time_str.endswith('s'):
+    #        return float(time_str[:-1]) / 3600
+    #    else:
+    #        return 0
+
+
+
 
     worklogs_df['Hours Spent'] = worklogs_df['Time Spent'].apply(time_to_hours)
 
@@ -431,8 +436,8 @@ def create_html_table_from_json(worklogs_json, filtered_df_exclude, filtered_df_
     Groups all tasks by epic and their labels. Only epics without labels are grouped under "No Label".
 
     :param worklogs_json: JSON string containing worklog data
-    :param filtered_df_exclude: DataFrame with filtered labels to exclude B2C/B2B/RI/Licensing
-    :param filtered_df_include: DataFrame with filtered labels including B2C/B2B/RI/Licensing
+    :param filtered_df_exclude: DataFrame with filtered labels to exclude B2C/B2B/RI/Licensing/Team
+    :param filtered_df_include: DataFrame with filtered labels including B2C/B2B/RI/Licensing/Team
     :param planned_tasks_df: DataFrame containing planned tasks
     :param start_week: Starting week number
     :param end_week: Ending week number
@@ -454,6 +459,7 @@ def create_html_table_from_json(worklogs_json, filtered_df_exclude, filtered_df_
             'B2B': '#e74c3c',       # Red
             'Licensing': '#2ecc71', # Green
             'RI': '#f1c40f',        # Yellow
+            'Team': '#9467bd',      # Purple
             'No Label': '#95a5a6'   # Gray
         }
         
@@ -499,8 +505,12 @@ def create_html_table_from_json(worklogs_json, filtered_df_exclude, filtered_df_
         
         buffer = io.BytesIO()
         plt.savefig(buffer, format='png', bbox_inches='tight')
+       
+        if type_colour == 0: # to be compatible with gmail, we save the fig in a png.
+            plt.savefig('camembert1.png', format='png')
+        else:
+            plt.savefig('camembert2.png', format='png')
         plt.close()
-        
         buffer.seek(0)
         image_png = buffer.getvalue()
         buffer.close()
@@ -509,7 +519,7 @@ def create_html_table_from_json(worklogs_json, filtered_df_exclude, filtered_df_
 
     # Create the two charts
     chart1 = create_pie_chart(filtered_df_exclude, "Time Distribution by Project", 0)
-    chart2 = create_pie_chart(filtered_df_include, "Time Distribution B2C/B2B/RI/Licensing", 1)
+    chart2 = create_pie_chart(filtered_df_include, "Time Distribution", 1)
 
     data = json.loads(worklogs_json)
     
@@ -518,7 +528,7 @@ def create_html_table_from_json(worklogs_json, filtered_df_exclude, filtered_df_
 
     # Function to determine the label category for an epic
     def get_label_category(labels):
-        for label in ['B2C', 'B2B', 'RI', 'Licensing']:
+        for label in ['B2C', 'B2B', 'RI', 'Licensing','Team']:
             if label in labels:
                 return label
         return 'No Label'
@@ -602,6 +612,7 @@ def create_html_table_from_json(worklogs_json, filtered_df_exclude, filtered_df_
         'B2B': {},
         'RI': {},
         'Licensing': {},
+        'Team': {},
         'No Label': {}
     }
 
@@ -615,7 +626,7 @@ def create_html_table_from_json(worklogs_json, filtered_df_exclude, filtered_df_
             final_unified_data['No Label'][epic_key] = info
 
     # Remove 'No Label' epics from other categories if mistakenly added
-    for category in ['B2C', 'B2B', 'RI', 'Licensing']:
+    for category in ['B2C', 'B2B', 'RI', 'Licensing','Team']:
         if 'No Label' in final_unified_data[category]:
             del final_unified_data[category]['No Label']
 
@@ -648,6 +659,7 @@ def create_html_table_from_json(worklogs_json, filtered_df_exclude, filtered_df_
         .label-B2B {{ background-color: #e74c3c; }}
         .label-RI {{ background-color: #f1c40f; }}
         .label-Licensing {{ background-color: #2ecc71; }}
+        .label-Team {{ background-color: #9467bd; }}
         .label-NoLabel {{ background-color: #95a5a6; }}
         .charts-container {{
             display: flex;
@@ -1035,8 +1047,8 @@ def main():
         #start_date = (today - timedelta(days=today.weekday() + 7)).strftime('%Y-%m-%d')  # Last Monday
         #end_date = (today + timedelta(days=4 - today.weekday())).strftime('%Y-%m-%d')    # This Friday
 
-        start_week = 44
-        end_week = 44
+        start_week = 47
+        end_week = 48
         start_date, end_date = get_dates_from_week_numbers(today.year, start_week, end_week);
 
         # Retrieve planned tasks
@@ -1048,7 +1060,7 @@ def main():
         total_time_per_person_and_epic = calculate_time_per_person_and_epic(worklogs_df)
         filtered_df_exclude, filtered_df_include = filter_time_by_label(
             total_time_per_person_and_label, 
-            ['B2C', 'B2B', 'RI', 'Licensing']
+            ['B2C', 'B2B', 'RI', 'Licensing','Team']
         )
 
         if not worklogs_df.empty or not planned_tasks_df.empty:
@@ -1059,7 +1071,7 @@ def main():
             total_time_per_person_and_label = calculate_time_per_person_and_label(worklogs_df)
             filtered_df_exclude, filtered_df_include = filter_time_by_label(
                 total_time_per_person_and_label, 
-                ['B2C', 'B2B', 'RI', 'Licensing']
+                ['B2C', 'B2B', 'RI', 'Licensing','Team']
             )
             
             # Create the HTML table with charts and planned tasks
@@ -1071,6 +1083,28 @@ def main():
                 start_week,
                 end_week
             )
+
+
+
+            # Charger les images
+            image1 = Image.open('camembert1.png')  # Remplacez par le chemin de votre première image
+            image2 = Image.open('camembert2.png')  # Remplacez par le chemin de votre deuxième image
+
+            # Obtenir la taille des images
+            width1, height1 = image1.size
+            width2, height2 = image2.size
+
+            # Créer une nouvelle image avec une largeur égale à la somme des largeurs et une hauteur égale à la plus grande hauteur
+            new_width = width1 + width2
+            new_height = max(height1, height2)
+            new_image = Image.new('RGB', (new_width, new_height))
+
+            # Coller les images dans la nouvelle image
+            new_image.paste(image1, (0, 0))  # Image de gauche
+            new_image.paste(image2, (width1, 0))  # Image de droite
+
+            # Enregistrer l'image concaténée
+            new_image.save('image_gmail.png')
 
             # Save HTML to file
             html_file = 'worklogs_table.html'
