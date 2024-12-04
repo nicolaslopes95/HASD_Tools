@@ -1059,7 +1059,8 @@ def generate_time_per_person_and_label_table(time_per_person_and_label):
     for person, row in pivot_df.iterrows():
         html += f"<tr><td>{person}</td>"
         for label in pivot_df.columns:
-            html += f"<td>{row[label]:.2f}</td>"
+            value = row[label]
+            html += f"<td>{value:.2f}</td>" if value != 0 else "<td></td>"
         html += "</tr>"
 
     html += "</table>"
