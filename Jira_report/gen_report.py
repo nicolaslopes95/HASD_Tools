@@ -1074,14 +1074,17 @@ import os
 def main():
     # Parse command-line arguments
     parser = argparse.ArgumentParser(description="Generate JIRA report")
-    parser.add_argument('--start-week', type=int, default=47, help="Starting week number (1-53), default is 47")
-    parser.add_argument('--end-week', type=int, default=47, help="Ending week number (1-53), default is 48")
+    parser.add_argument('--start-week', type=int, default=53, help="Starting week number (1-53), default is 47")
+    parser.add_argument('--end-week', type=int, default=53, help="Ending week number (1-53), default is 48")
     args = parser.parse_args()
     start_week = args.start_week
     end_week = args.end_week
-    gen_report(start_week, end_week)
+    today = datetime.now()
+    year = today.year
+    year = 2024
+    gen_report(start_week, end_week,year)
 
-def gen_report(start_week, end_week):
+def gen_report(start_week, end_week,year):
     # Load environment variables
     jira_server = os.getenv('JIRA_SERVER')
     jira_email = os.getenv('JIRA_EMAIL')
@@ -1102,13 +1105,13 @@ def gen_report(start_week, end_week):
         logging.info("Successfully connected to JIRA.")
 
         project_key = 'ASD'  # Replace with your project key or make it configurable
-        today = datetime.now()
+        #today = datetime.now()
 
 
-        start_date, end_date = get_dates_from_week_numbers(today.year, start_week, end_week)
+        start_date, end_date = get_dates_from_week_numbers(year, start_week, end_week)
 
         # Create directory for the reports
-        report_dir = f"report_{today.year}_W{start_week}_W{end_week}"
+        report_dir = f"report_{year}_W{start_week}_W{end_week}"
         os.makedirs(report_dir, exist_ok=True)
 
         # Retrieve planned tasks
