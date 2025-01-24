@@ -120,8 +120,16 @@ def time_to_hours(time_str):
         total_hours += float(days.strip()) * 8  # Assuming 1 day = 8 hours
     
     if 'h' in time_str:
-        hours = time_str.replace('h', '').strip()
-        total_hours += float(hours)
+        hours, time_str = time_str.split('h')
+        total_hours += float(hours.strip())  # Assuming 1 day = 8 hours
+
+    if 'm' in time_str:
+         minutes = time_str.replace('m', '').strip()
+         total_hours += float(minutes) * 1/60 # 1 minute = 1/60 hours
+
+#    if 'h' in time_str:
+#        hours = time_str.replace('h', '').strip()
+#        total_hours += float(hours)
     
     return total_hours
 
@@ -1074,17 +1082,19 @@ import os
 def main():
     # Parse command-line arguments
     parser = argparse.ArgumentParser(description="Generate JIRA report")
-    parser.add_argument('--start-week', type=int, default=53, help="Starting week number (1-53), default is 47")
-    parser.add_argument('--end-week', type=int, default=53, help="Ending week number (1-53), default is 48")
+    parser.add_argument('--start-week', type=int, default=4, help="Starting week number (1-53), default is 47")
+    parser.add_argument('--end-week', type=int, default=4, help="Ending week number (1-53), default is 48")
+    parser.add_argument('--project_key', type=str, default="ASD", help="Jira project key, default is ASD")
     args = parser.parse_args()
+    project_key = args.project_key
     start_week = args.start_week
     end_week = args.end_week
     today = datetime.now()
     year = today.year
-    year = 2024
-    gen_report(start_week, end_week,year)
+    #year = 2024
+    gen_report(start_week, end_week,year,project_key)
 
-def gen_report(start_week, end_week,year):
+def gen_report(start_week, end_week,year,project_key):
     # Load environment variables
     jira_server = os.getenv('JIRA_SERVER')
     jira_email = os.getenv('JIRA_EMAIL')
@@ -1104,11 +1114,11 @@ def gen_report(start_week, end_week,year):
         jira = get_jira_connection(jira_server, jira_email, jira_token)
         logging.info("Successfully connected to JIRA.")
 
-        project_key = 'ASD'  # Replace with your project key or make it configurable
+        #project_key = 'ASD'  # Replace with your project key or make it configurable
         #today = datetime.now()
 
-
-        start_date, end_date = get_dates_from_week_numbers(year, start_week, end_week)
+        # The week number is not goor in 2025 ---> to be improved    
+        start_date, end_date = get_dates_from_week_numbers(year, start_week-1, end_week-1)
 
         # Create directory for the reports
         report_dir = f"report_{year}_W{start_week}_W{end_week}"
